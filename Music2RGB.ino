@@ -150,10 +150,10 @@ void loop()
     int LastValue = 32767;
     BadSample = 0;
     #ifdef AVR
-    for (byte i = 0 ; i < NumOfFreqBins ; i++) // save NumOfFreqBins samples... get out of this loop ASAP
+    for (byte i = 0 ; i < NumOfFreqBins ; i++) // save NumOfFreqBins samples for FHT
     #endif
     #ifdef Teensy3
-    for (byte i = 0 ; i < NumOfFreqBins*2 ; i = i + 2) // save NumOfFreqBins samples... get out of this loop ASAP
+    for (byte i = 0 ; i < NumOfFreqBins*2 ; i++) // save NumOfFreqBins * 2 samples for FFT (imaginary data)
     #endif
     {
       int Sample;
@@ -179,6 +179,10 @@ void loop()
       Sample -= 0x01FF;                        // form into a signed int at the midrange point of mic input (511 = 0x01FF, 512 = 0x0200;)
       Sample <<= 6;                            // form into a 16b signed int
       fht_input[i] = Sample;         // put real data into bins
+      #ifdef Teensy3
+        i++;
+        fht_input[i] = 0;
+      #endif
     }
     if (BadSample == 0)
     {
