@@ -26,15 +26,14 @@
   #define BluePin            3
   #define IR_RECV_PIN        2
   #define IR_POW_PIN         4   // IR receiver powered off GPIO pin
-  #define PeakPWMValue   65536
   #define FFT_SIZE NumOfFreqBins
   #define AUDIO_PIN 14
   #define ANALOG_READ_RESOLUTION 12
   #define ANALOG_READ_AVERAGING 2
+  #define PeakPWMValue   65536
 #endif
 #define PrintInterval  33334   // serial port print interval in uS
 #define ButtonInterval 16667   // interval in uS to check for new button presses
-#define PeakArrayMin       0   // min value for peak autoscaling
 #define MultiSample       10   // Number of audio/FHT loops are done before the largest values seen are used for determining RGB PWM levels.
 /* FHT Freq / MultiSample = PWM update Freq *** With serial debug off: Use 30Hz or 24Hz for video recording *** 45-82Hz for human eyes ***
 Over ~80Hz PWM refresh and a lot of content starts to look like flickering instead of smooth visual reaction. */
@@ -54,11 +53,13 @@ Over ~80Hz PWM refresh and a lot of content starts to look like flickering inste
 #endif
 
 #ifdef Teensy3
- // something
+ // something FFT here
 #endif
 
 #include <IRremote.h>          // https://github.com/shirriff/Arduino-IRremote & http://www.righto.com/2009/08/multi-protocol-infrared-remote-library.html
+#include "IRhashdecode.h"      // http://arcfn.com/files/IRhashdecode.pde
 #include <EEPROM.h>            // used for saving settings between power cycles
+
 
 unsigned int OutputGreen = 0;
 unsigned int OutputRed = 0;
@@ -90,7 +91,6 @@ unsigned int MinArray[NumOfFreqBins/2];
   byte FoundPeakArray[NumOfFreqBins/2];
   byte FoundMinArray[NumOfFreqBins/2];
   byte DisablePrint = 0;
-  int Delta = 0;
   int PeakDeltaBad = 0;
   int PeakDeltaGood = 0;
   unsigned int NumOfPops = 0;
@@ -111,6 +111,7 @@ byte SampleCounter = 0;
 byte PowerOn = 1;
 byte BadSample = 0;
 byte ADCTimeLast = 0;
+int Delta = 0;
 
 IRrecv irrecv(IR_RECV_PIN);
 decode_results results;
@@ -183,15 +184,14 @@ void loop()
         }
         #endif
       }
-      else
-      {
-        Sample = ReadADC();
-      }
+      else{Sample = ReadADC();} // it's the first sample, just read
       LastValue = Sample;
-      Sample -= 0x01FF;                        // form into a signed int at the midrange point of mic input (511 = 0x01FF, 512 = 0x0200;)
-      Sample <<= 6;                            // form into a 16b signed int
+      #ifdef AVR
+        Sample -= 0x01FF;                        // form into a signed int at the midrange point of mic input (511 = 0x01FF, 512 = 0x0200;)
+        Sample <<= 6;                            // form into a 16b signed int
+      #endif
       fht_input[i] = Sample;         // put real data into bins
-      #ifdef Teensy3
+      #ifdef Teensy3 // have to pad the array with imaginary numbers
         i++;
         fht_input[i] = 0;
       #endif
@@ -521,7 +521,7 @@ void loop()
       {
         for (byte Index = 0; Index < (NumOfFreqBins/2); Index++)
         {
-          //if (PeakArray[Index] > PeakArrayMin){PeakArray[Index] = PeakArray[Index] * .985;}
+          //if (PeakArray[Index] > 0){PeakArray[Index] = PeakArray[Index] * .985;}
           if (MinArray[Index] <= 20){MinArray[Index]++;}else {MinArray[Index] = MinArray[Index] * 1.025;} // Magic Number Warning!!!
         }
         AutoScaleCounter = 0;
@@ -1123,7 +1123,6 @@ byte PrintBlocks(byte blocks)
   Serial.println();
 }
 
-
 void ResetLEDValues()
 {
   #ifdef Debug
@@ -1138,7 +1137,7 @@ void ResetLEDValues()
   BlueMin = 65535;
   for (byte Index = 0; Index < (NumOfFreqBins/2); Index++)
   {
-    PeakArray[Index] = PeakArrayMin;
+    PeakArray[Index] = 0;
     MinArray[Index] = 65535;
     #ifdef Debug
     PrintingArray[Index] = 0;
@@ -1202,60 +1201,3 @@ int ReadADC()
   interrupts();
   return Output;
 }
-
-/*
- * IRhashdecode - decode an arbitrary IR code.
- * Instead of decoding using a standard encoding scheme
- * (e.g. Sony, NEC, RC5), the code is hashed to a 32-bit value.
- *
- * An IR detector/demodulator must be connected to the input RECV_PIN.
- * This uses the IRremote library: http://arcfn.com/2009/08/multi-protocol-infrared-remote-library.html
- *
- * The algorithm: look at the sequence of MARK signals, and see if each one
- * is shorter (0), the same length (1), or longer (2) than the previous.
- * Do the same with the SPACE signals.  Hszh the resulting sequence of 0's,
- * 1's, and 2's to a 32-bit value.  This will give a unique value for each
- * different code (probably), for most code systems.
- *
- * You're better off using real decoding than this technique, but this is
- * useful if you don't have a decoding algorithm.
- *
- * Copyright 2010 Ken Shirriff
- * http://arcfn.com
- */
-
-
-// Compare two tick values, returning 0 if newval is shorter,
-// 1 if newval is equal, and 2 if newval is longer
-// Use a tolerance of 20%
-int compare(unsigned int oldval, unsigned int newval) {
-  if (newval < oldval * .8) {
-    return 0;
-  } 
-  else if (oldval < newval * .8) {
-    return 2;
-  } 
-  else {
-    return 1;
-  }
-}
-
-// Use FNV hash algorithm: http://isthe.com/chongo/tech/comp/fnv/#FNV-param
-#define FNV_PRIME_32 16777619
-#define FNV_BASIS_32 2166136261
-
-/* Converts the raw code values into a 32-bit hash code.
- * Hopefully this code is unique for each button.
- */
-
-unsigned long decodeHash(decode_results *results) {
-  unsigned long hash = FNV_BASIS_32;
-  for (int i = 1; i+2 < results->rawlen; i++) {
-    int value =  compare(results->rawbuf[i], results->rawbuf[i+2]);
-    // Add value into the hash
-    hash = (hash * FNV_PRIME_32) ^ value;
-  }
-  return hash;
-}
-
-
