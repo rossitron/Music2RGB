@@ -90,6 +90,10 @@ unsigned int MinArray[NumOfFreqBins/2];
   byte FoundPeakArray[NumOfFreqBins/2];
   byte FoundMinArray[NumOfFreqBins/2];
   byte DisablePrint = 0;
+  int Delta = 0;
+  int PeakDeltaBad = 0;
+  int PeakDeltaGood = 0;
+  unsigned int NumOfPops = 0;
   byte FullDebug = 0;
 #endif
 
@@ -107,9 +111,6 @@ byte SampleCounter = 0;
 byte PowerOn = 1;
 byte BadSample = 0;
 byte ADCTimeLast = 0;
-int Delta = 0;
-int PeakDelta = 0;
-unsigned int NumOfPops = 0;
 
 IRrecv irrecv(IR_RECV_PIN);
 decode_results results;
@@ -161,15 +162,26 @@ void loop()
       {
         Sample = ReadADC();
         Delta = Sample - LastValue;
-        if (abs(Delta) > PopThreshold) // looks like a pop, don't process this sample
+        if (abs(Delta) > 100) // looks like a pop, don't process this sample
         {
           BadSample = 1;
+          #ifdef Debug
           NumOfPops++;
+          if (abs(Delta) > PeakDeltaBad)
+            {
+              PeakDeltaBad = abs(Delta);
+            }
+          #endif
         }
-        if (abs(Delta) > PeakDelta)
+        #ifdef Debug
+        else
         {
-          PeakDelta = abs(Delta);
+          if (abs(Delta) > PeakDeltaGood)
+          {
+            PeakDeltaGood = abs(Delta);
+          }
         }
+        #endif
       }
       else
       {
@@ -510,7 +522,7 @@ void loop()
         for (byte Index = 0; Index < (NumOfFreqBins/2); Index++)
         {
           //if (PeakArray[Index] > PeakArrayMin){PeakArray[Index] = PeakArray[Index] * .985;}
-          if (MinArray[Index] <= 20){MinArray[Index]++;}else {MinArray[Index] = MinArray[Index] * 1.05;} // Magic Number Warning!!!
+          if (MinArray[Index] <= 20){MinArray[Index]++;}else {MinArray[Index] = MinArray[Index] * 1.025;} // Magic Number Warning!!!
         }
         AutoScaleCounter = 0;
       }
@@ -605,10 +617,12 @@ void loop()
             unsigned int PeakRaw10bit = PeakRaw;
             PeakRaw10bit = PeakRaw10bit / 32;
             Serial.println(PeakRaw10bit);
-            Serial.print("PeakDelta:");
-            Serial.print(PeakDelta);
-            Serial.print(", Pops:");
-            Serial.println(NumOfPops);
+            Serial.print("PkGood:");
+            Serial.print(PeakDeltaGood);
+            Serial.print(" Pops:");
+            Serial.print(NumOfPops);
+            Serial.print(" PkBad:");
+            Serial.println(PeakDeltaBad);
           }
           else{Serial.println();}
           if (PeakRaw >= 14000){SerialColorWhite();}
@@ -1112,7 +1126,10 @@ byte PrintBlocks(byte blocks)
 
 void ResetLEDValues()
 {
-  PeakDelta = 0;
+  #ifdef Debug
+    PeakDeltaBad = 0;
+    PeakDeltaGood = 0;
+  #endif
   RedPeak = 0;
   GreenPeak = 0;
   BluePeak = 0;
