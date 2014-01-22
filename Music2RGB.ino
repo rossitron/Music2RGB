@@ -1,11 +1,8 @@
 // GPLv3 
 // Copyright 2014 Ross Melville
 
-// IRhashdecode - decode an arbitrary IR code.
-// Copyright 2010 Ken Shirriff
-
-#define AVR                    // Using an AVR proc where the uber fast FHT lib can be used?
-//#define Teensy3                // Using a Teensy 3.1 proc
+//#define AVR                    // Using an AVR proc where the uber fast FHT lib can be used?
+#define Teensy3                // Using a Teensy 3.1 proc
 #define Debug                  // Uncomment for debug info on serial port
 #define NumOfFreqBins     32   // set to 32 point fft or fht
 #ifdef AVR
@@ -60,6 +57,11 @@ Over ~80Hz PWM refresh and a lot of content starts to look like flickering inste
 #include "IRhashdecode.h"      // http://arcfn.com/files/IRhashdecode.pde
 #include <EEPROM.h>            // used for saving settings between power cycles
 
+/* Add to IRremote.h under Teensy 3.0
+// Teensy 3.1
+#elif defined(__MK20DX256__)
+  #define IR_USE_TIMER_CMT  // tx = pin 5
+*/
 
 unsigned int OutputGreen = 0;
 unsigned int OutputRed = 0;
@@ -95,6 +97,11 @@ unsigned int MinArray[NumOfFreqBins/2];
   int PeakDeltaGood = 0;
   unsigned int NumOfPops = 0;
   byte FullDebug = 0;
+#endif
+
+#ifdef Teensy3
+int fht_input[NumOfFreqBins];
+int fht_lin_out[NumOfFreqBins];
 #endif
 
 unsigned int ModeCounter = 0;
@@ -189,8 +196,9 @@ void loop()
       #ifdef AVR
         Sample -= 0x01FF;                        // form into a signed int at the midrange point of mic input (511 = 0x01FF, 512 = 0x0200;)
         Sample <<= 6;                            // form into a 16b signed int
+        fht_input[i] = Sample;         // put real data into bins
       #endif
-      fht_input[i] = Sample;         // put real data into bins
+      
       #ifdef Teensy3 // have to pad the array with imaginary numbers
         i++;
         fht_input[i] = 0;
@@ -521,7 +529,7 @@ void loop()
       {
         for (byte Index = 0; Index < (NumOfFreqBins/2); Index++)
         {
-          //if (PeakArray[Index] > 0){PeakArray[Index] = PeakArray[Index] * .985;}
+          if (PeakArray[Index] > 0){PeakArray[Index] = PeakArray[Index] * .985;}
           if (MinArray[Index] <= 20){MinArray[Index]++;}else {MinArray[Index] = MinArray[Index] * 1.025;} // Magic Number Warning!!!
         }
         AutoScaleCounter = 0;
@@ -554,8 +562,8 @@ void loop()
             
             Serial.print(TimeNow - TimeExitPrint);
             Serial.println("µS print intvl");
-            // Hz Sample and Hz PWM are accurate to what the speed would be with printing off.
-            // With printing on it will be that speed between the serial prints
+            /* Hz Sample and Hz PWM are accurate to what the speed would be with printing off.
+               With printing on it will be that speed between the serial prints               */
             Serial.print(1000000 / LoopTimeFloater);
             Serial.print("Hz FHT, ");
             Serial.print(Hz);
@@ -578,7 +586,7 @@ void loop()
           unsigned int BluePrint;
           unsigned int BluePeakPrint;
           unsigned int BlueMinPrint;
-          if (Mode == 1 || Mode == 2) // in color washer mode set the min and max to the 8bit PWM output depth range
+          if (Mode == 1 || Mode == 2) // in color washer mode set the min and max to the PeakPWMValue output depth range
           {
             RedPrint = OutputRed;
             RedPeakPrint = PeakPWMValue;
@@ -807,6 +815,113 @@ void PrintChart()
     FoundPeakArray[Index] = 0;
     FoundMinArray[Index] = 0;
   }
+}
+#endif
+
+byte PrintBlocks(byte blocks)
+{
+  byte blockcount = blocks;
+  Serial.print("▌");
+  for (blocks; blocks > 0; blocks--)
+  {
+    if (blocks == 1 && blockcount % 2 != 0)
+    {
+      Serial.print("▌");
+    }
+    else if (blocks % 2 == 0)
+    {
+      Serial.print("█");
+    }
+  }
+  Serial.println();
+}
+
+void ResetLEDValues()
+{
+  #ifdef Debug
+    PeakDeltaBad = 0;
+    PeakDeltaGood = 0;
+  #endif
+  RedPeak = 0;
+  GreenPeak = 0;
+  BluePeak = 0;
+  RedMin = 65535; // set to max so a new min is always found the first time
+  GreenMin = 65535;
+  BlueMin = 65535;
+  for (byte Index = 0; Index < (NumOfFreqBins/2); Index++)
+  {
+    PeakArray[Index] = 0;
+    MinArray[Index] = 65535;
+    #ifdef Debug
+    PrintingArray[Index] = 0;
+    PrintingMinArray[Index] = 65535;
+    PrintingPeakArray[Index] = 0;
+    #endif
+  }
+}
+
+void CheckEEPROM()
+{
+  if (EEPROM.read(0) == 1) // mode EEPROM write finish?
+  {
+    Mode = EEPROM.read(1); // set the mode to the last used mode
+  }
+  else // power went out while writing, assume it's trash and set a new sane default
+  {
+    EEPROM.write(1, 0); // set the mode to default
+    EEPROM.write(0, 1); // write complete, data good
+  }
+  if (EEPROM.read(2) == 1) // color EEPROM write finish?
+  {
+    ColorWashSpeed = EEPROM.read(3); // set the color speed to the last used mode
+  }
+  else // power went out while writing, assume it's trash and set a new sane default
+  {
+    ColorWashSpeed = 10;
+    EEPROM.write(3, 10); // set the color speed to default
+    EEPROM.write(2, 1); // write complete, data good
+  }
+  
+  if (EEPROM.read(4) == 1) // Power on EEPROM write finish?
+  {
+    PowerOn = EEPROM.read(5); // set power on to the last used mode
+  }
+  else // power went out while writing, assume it's trash and set a new sane default
+  {
+    EEPROM.write(5, 1); // set power on to default
+    EEPROM.write(4, 1); // write complete, data good
+  }
+
+  #ifdef Debug
+    if (EEPROM.read(256) == 1) // Full debug EEPROM write finish?
+    {
+      FullDebug = EEPROM.read(255); // set Full debug to the last used mode
+    }
+    else // power went out while writing, assume it's trash and set a new sane default
+    {
+      EEPROM.write(255, 0); // set Full debug to default
+      EEPROM.write(256, 1); // write complete, data good
+    }
+  #endif
+}
+
+#ifdef AVR
+int ReadADC()
+{
+  noInterrupts();           // get lots more nasty pops/error on the measurements without doing this
+  while(!(ADCSRA & 0x10));  // wait for adc to be ready
+  ADCSRA = ADCReset;        // reset the adc
+  int Output = ADCW;        // read the adc
+  interrupts();
+  return Output;
+}
+#endif
+
+#ifdef Teensy3
+int ReadADC()
+{
+  int Output = 0;
+  return Output;
 }
 #endif
 
@@ -1105,99 +1220,3 @@ void SerialClearScreen()
   Serial.print("[2J");    // clear screen command
 }
 
-byte PrintBlocks(byte blocks)
-{
-  byte blockcount = blocks;
-  Serial.print("▌");
-  for (blocks; blocks > 0; blocks--)
-  {
-    if (blocks == 1 && blockcount % 2 != 0)
-    {
-      Serial.print("▌");
-    }
-    else if (blocks % 2 == 0)
-    {
-      Serial.print("█");
-    }
-  }
-  Serial.println();
-}
-
-void ResetLEDValues()
-{
-  #ifdef Debug
-    PeakDeltaBad = 0;
-    PeakDeltaGood = 0;
-  #endif
-  RedPeak = 0;
-  GreenPeak = 0;
-  BluePeak = 0;
-  RedMin = 65535; // set to max so a new min is always found the first time
-  GreenMin = 65535;
-  BlueMin = 65535;
-  for (byte Index = 0; Index < (NumOfFreqBins/2); Index++)
-  {
-    PeakArray[Index] = 0;
-    MinArray[Index] = 65535;
-    #ifdef Debug
-    PrintingArray[Index] = 0;
-    PrintingMinArray[Index] = 65535;
-    PrintingPeakArray[Index] = 0;
-    #endif
-  }
-}
-
-void CheckEEPROM()
-{
-  if (EEPROM.read(0) == 1) // mode EEPROM write finish?
-  {
-    Mode = EEPROM.read(1); // set the mode to the last used mode
-  }
-  else // power went out while writing, assume it's trash and set a new sane default
-  {
-    EEPROM.write(1, 0); // set the mode to default
-    EEPROM.write(0, 1); // write complete, data good
-  }
-  if (EEPROM.read(2) == 1) // color EEPROM write finish?
-  {
-    ColorWashSpeed = EEPROM.read(3); // set the color speed to the last used mode
-  }
-  else // power went out while writing, assume it's trash and set a new sane default
-  {
-    ColorWashSpeed = 10;
-    EEPROM.write(3, 10); // set the color speed to default
-    EEPROM.write(2, 1); // write complete, data good
-  }
-  
-  if (EEPROM.read(4) == 1) // Power on EEPROM write finish?
-  {
-    PowerOn = EEPROM.read(5); // set power on to the last used mode
-  }
-  else // power went out while writing, assume it's trash and set a new sane default
-  {
-    EEPROM.write(5, 1); // set power on to default
-    EEPROM.write(4, 1); // write complete, data good
-  }
-
-  #ifdef Debug
-    if (EEPROM.read(256) == 1) // Full debug EEPROM write finish?
-    {
-      FullDebug = EEPROM.read(255); // set Full debug to the last used mode
-    }
-    else // power went out while writing, assume it's trash and set a new sane default
-    {
-      EEPROM.write(255, 0); // set Full debug to default
-      EEPROM.write(256, 1); // write complete, data good
-    }
-  #endif
-}
-
-int ReadADC()
-{
-  noInterrupts();           // get lots more nasty pops/error on the measurements without doing this
-  while(!(ADCSRA & 0x10));  // wait for adc to be ready
-  ADCSRA = ADCReset;        // reset the adc
-  int Output = ADCW;        // read the adc
-  interrupts();
-  return Output;
-}

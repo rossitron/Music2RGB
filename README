@@ -1,0 +1,5 @@
+https://raw2.github.com/rossitron/Sound_Reaction_with_IR_remote/master/Jan12%20Screenshot.png
+Yet another sound reactive Arduino project with RGB LEDs...
+32 point FHT of microphone data (32 samples (@ 36kHz) @ 730Hz on a atmega328 @ 16MHz) weighted and divided up drives 3 PWM pins hooked up to RGB LEDs. Basic support reading from IR remote control buttons and simple handling of button presses is working.
+
+Only tested on Arduino ATmega328 so far but should run on other ATmega hardware with minor tweaks. With debug serial turned on it complies to over 25kbytes. This project is currently under heavy development... Code clean up is under way. Teensy 3.1 port using normal FFT soon. Many new features to come. RF data linking between units.
