@@ -1,10 +1,10 @@
 // GPLv3 
 // Copyright 2014 Ross Melville
 
-//#define AVR                    // Using an AVR proc where the uber fast FHT lib can be used?
-#define Teensy3                // Using a Teensy 3.1 proc
+//#define AVR                    // Using AVR board where the uber fast FHT lib can be used
+#define Teensy31                // Using Teensy 3.1 board
 #define Debug                  // Uncomment for debug info on serial port
-#define NumOfFreqBins     32   // set to 32 point fft or fht
+#define NumOfFreqBins     128   // set to 32 point fft or fht
 #ifdef AVR
   #define RedPin             6
   #define GreenPin           5
@@ -12,12 +12,12 @@
   #define IR_RECV_PIN        2
   #define IR_POW_PIN         4   // IR receiver powered off GPIO pin
   #define LIN_OUT            1   // use linear fht output function
-  #define FHT_N  NumOfFreqBins 
+  #define FHT_N  NumOfFreqBins
   #define ADCReset        0xf5   // reset the adc, freq = 1000 kHz / 13.5 =~ 74 kHz sampling rate
   #define ADCFreeRun      0xe5   // set the adc to free running mode, freq = 1000 kHz / 13.5 =~ 74 kHz sampling rate
   #define PeakPWMValue     255
 #endif
-#ifdef Teensy3
+#ifdef Teensy31
   #define RedPin             6
   #define GreenPin           5
   #define BluePin            3
@@ -31,7 +31,7 @@
 #endif
 #define PrintInterval  33334   // serial port print interval in uS
 #define ButtonInterval 16667   // interval in uS to check for new button presses
-#define MultiSample       10   // Number of audio/FHT loops are done before the largest values seen are used for determining RGB PWM levels.
+#define MultiSample       0   // Number of audio/FHT loops are done before the largest values seen are used for determining RGB PWM levels.
 /* FHT Freq / MultiSample = PWM update Freq *** With serial debug off: Use 30Hz or 24Hz for video recording *** 45-82Hz for human eyes ***
 Over ~80Hz PWM refresh and a lot of content starts to look like flickering instead of smooth visual reaction. */
 
@@ -49,15 +49,17 @@ Over ~80Hz PWM refresh and a lot of content starts to look like flickering inste
   #include <FHT.h>               // http://wiki.openmusiclabs.com/wiki/ArduinoFHT
 #endif
 
-#ifdef Teensy3
- // something FFT here
+#ifdef Teensy31
+ #include <Audio.h>
+ #include <SD.h>
+ #include <Wire.h>
 #endif
 
 #include <IRremote.h>          // https://github.com/shirriff/Arduino-IRremote & http://www.righto.com/2009/08/multi-protocol-infrared-remote-library.html
 #include "IRhashdecode.h"      // http://arcfn.com/files/IRhashdecode.pde
 #include <EEPROM.h>            // used for saving settings between power cycles
 
-/* Add to IRremote.h under Teensy 3.0
+/* Add to IRremoteint.h under Teensy 3.0
 // Teensy 3.1
 #elif defined(__MK20DX256__)
   #define IR_USE_TIMER_CMT  // tx = pin 5
@@ -99,9 +101,12 @@ unsigned int MinArray[NumOfFreqBins/2];
   byte FullDebug = 0;
 #endif
 
-#ifdef Teensy3
-int fht_input[NumOfFreqBins];
-int fht_lin_out[NumOfFreqBins];
+#ifdef Teensy31
+long int fht_lin_out[NumOfFreqBins];
+long int fht_input[NumOfFreqBins];
+  AudioInputAnalog  analogPinInput(0);
+  AudioAnalyzeFFT256  myFFT(20);
+  AudioConnection  c1(analogPinInput, 0, myFFT, 0);
 #endif
 
 unsigned int ModeCounter = 0;
@@ -129,6 +134,7 @@ String ButtonActive = "None";
 
 void setup()
 {
+  EEPROM.write(1, 1); // set Full debug to default
   ResetLEDValues();
   pinMode(RedPin, OUTPUT);
   pinMode(GreenPin, OUTPUT);
@@ -139,6 +145,10 @@ void setup()
     ADCSRA = ADCFreeRun; // set the adc to free running mode
     ADMUX = 0x40; // use adc0
     DIDR0 = 0x01; // turn off the digital input for adc0
+  #endif
+  
+  #ifdef Teensy31
+    AudioMemory(12);
   #endif
   irrecv.enableIRIn(); // Start the receiver
   CheckEEPROM();  // checks eeprom memory for safely written settings bits
@@ -156,14 +166,10 @@ void loop()
     #ifdef Debug
     TimeStarted = micros();
     #endif
-    int LastValue = 32767;
     BadSample = 0;
     #ifdef AVR
+    int LastValue = 32767;
     for (byte i = 0 ; i < NumOfFreqBins ; i++) // save NumOfFreqBins samples for FHT
-    #endif
-    #ifdef Teensy3
-    for (byte i = 0 ; i < NumOfFreqBins*2 ; i++) // save NumOfFreqBins * 2 samples for FFT (imaginary data)
-    #endif
     {
       int Sample;
       if (LastValue != 32767)
@@ -193,24 +199,24 @@ void loop()
       }
       else{Sample = ReadADC();} // it's the first sample, just read
       LastValue = Sample;
-      #ifdef AVR
-        Sample -= 0x01FF;                        // form into a signed int at the midrange point of mic input (511 = 0x01FF, 512 = 0x0200;)
-        Sample <<= 6;                            // form into a 16b signed int
-        fht_input[i] = Sample;         // put real data into bins
-      #endif
-      
-      #ifdef Teensy3 // have to pad the array with imaginary numbers
-        i++;
-        fht_input[i] = 0;
-      #endif
+      Sample -= 0x01FF;                        // form into a signed int at the midrange point of mic input (511 = 0x01FF, 512 = 0x0200;)
+      Sample <<= 6;                            // form into a 16b signed int
+      fht_input[i] = Sample;         // put real data into bins
     }
+    #endif
+    #ifdef AVR
     if (BadSample == 0)
     {
-    #ifdef AVR
       fht_window();  // window the data for better frequency response
       fht_reorder(); // reorder the data before doing the fht
       fht_run();     // process the data in the fht
       fht_mag_lin(); // take the linear output of the fht
+    #endif
+    #ifdef Teensy31
+    if (myFFT.available()) {
+      for (byte Index = 0; Index < (NumOfFreqBins/2); Index++){
+      fht_lin_out[Index] = myFFT.output[Index];
+      }
     #endif
     for (byte Index = 0; Index < (NumOfFreqBins/2); Index++)
     {
@@ -917,7 +923,7 @@ int ReadADC()
 }
 #endif
 
-#ifdef Teensy3
+#ifdef Teensy31
 int ReadADC()
 {
   int Output = 0;
